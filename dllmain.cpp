@@ -3,7 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
 #include <windows.h>
-#include "..\includes\injector\injector.hpp"
+#include "injector\injector.hpp"
 #include "imgui.h"
 #include "imgui_impl_dx9.h"
 #include "imgui_impl_win32.h"
