@@ -12,8 +12,6 @@
 #include <WinSock2.h>
 #include "upnpnat/upnpnat.h"
 
-#pragma comment(lib,"ws2_32.lib") //Winsock Library
-
 #define GAME_HWND_ADDR 0x00982BF4
 #define GAME_D3DDEVICE_ADDR 0x00982BDC
 #define WNDPROC_POINTER_ADDR 0x6E6AF1
@@ -36,6 +34,7 @@ uintptr_t RenderResetFuncAddr;
 
 bool bShowIPInputWindow = false;
 bool bShownIPWindowOnce = false;
+bool bIPWindowOnceFlag = false;
 
 uint32_t LastPortMapAddr = 0;
 bool bUseUPnP = false;
@@ -60,12 +59,14 @@ void InitiateConnection()
 
 void DrawIPInputWindow()
 {
-	if (ImGui::BeginPopupModal(POPUP_MODAL_HEADER, &bShowIPInputWindow, ImGuiWindowFlags_AlwaysAutoResize))
+	if (ImGui::BeginPopupModal(POPUP_MODAL_HEADER, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
 	{
-		if (!bShownIPWindowOnce)
+		if (!bIPWindowOnceFlag)
 		{
 			bUseUPnP = true;
+			ImGui::SetKeyboardFocusHere();
 			bShownIPWindowOnce = true;
+			bIPWindowOnceFlag = true;
 		}
 
 		ImGui::InputText("IP Address", (char*)0x008F42EC, 32);
@@ -74,15 +75,22 @@ void DrawIPInputWindow()
 
 		ImGui::Checkbox("Use UPnP for host port", &bUseUPnP);
 
-		if (ImGui::Button("Connect"))
+		if (ImGui::Button("Connect (Return)", ImVec2(ImGui::GetContentRegionAvail().x / 2.0f, 0)) || (GetAsyncKeyState(VK_RETURN) >> 15))
 		{
+			ImGuiIO& io = ImGui::GetIO(); (void)io;
+			io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
 			bShowIPInputWindow = false;
+			bIPWindowOnceFlag = false;
 			InitiateConnection();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Cancel"))
+		if (ImGui::Button("Cancel (ESC)", ImVec2(ImGui::GetContentRegionAvail().x, 0)) || (GetAsyncKeyState(VK_ESCAPE) >> 15)) // slightly buggy, can cause the menu to show in main menu if you're fast enough
 		{
+			ImGuiIO& io = ImGui::GetIO(); (void)io;
+			io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 			bShowIPInputWindow = false;
+			bIPWindowOnceFlag = false;
 		}
 
 		ImGui::EndPopup();
@@ -112,7 +120,11 @@ void __stdcall PCLAN_NotificationMessageHook(uint32_t msg, void* FEObject, uint3
 		if (GetAsyncKeyState(0x32) >> 15) // press 2 on keyboard to invoke the menu while in the server browser
 		{
 			if (!bShowIPInputWindow)
+			{
+				ImGuiIO& io = ImGui::GetIO(); (void)io;
+				io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
 				bShowIPInputWindow = true;
+			}
 		}
 		return;
 	}
@@ -154,18 +166,6 @@ namespace InputBlocker
 
 LRESULT WINAPI ImguiWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	//ImGuiIO& io = ImGui::GetIO();
-
-	//switch (msg)
-	//{
-	//	// ignore the following messages because it conflicts with the game & XtendedInput
-	//case WM_MOUSELEAVE:
-	//case WM_NCMOUSELEAVE:
-	//case WM_MOUSEMOVE:
-	//case WM_SETCURSOR:
-	//	return FALSE;
-	//}
-
 	ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 	return FALSE;
 }
@@ -272,7 +272,6 @@ void __cdecl RenderLoop(int X, int Y)
 
 	if (bInitedImgui)
 	{
-		//ImguiSetCursorPos(X, Y);
 		ImguiUpdate();
 		ShowWindows();
 		ImguiRenderFrame();
@@ -295,6 +294,8 @@ char* ReturnServerIP()
 {
 	return ServerIP;
 }
+
+// Network patches
 
 uintptr_t GetNetworkLongAddr = 0x8519E0;
 uint32_t CatchInterfaceAddr(uint32_t a0, uint32_t a1)
@@ -371,7 +372,8 @@ int Init()
 	SocketFunc1 = (uintptr_t)injector::MakeCALL(0x00851482, SocketPatch1).get_raw<void>();
 	injector::MakeCALL(0x0086408A, SocketPatch1);
 
-	// nuke the demangler because it's a security risk (because the domain is still working) and because online doesn't work
+	// nuke the demangler because it's a security risk (because the domain is still working for some ungodly reason) and because online doesn't work
+	// TODO - remove / workaround this if the online mode ever gets revived
 	injector::WriteMemory<uint32_t>(0x008C7ADC, 0, true);
 
 	// patch the UDP bind to use any addr -- needed for internet connections
