@@ -24,6 +24,12 @@
     <ClCompile Include="imgui\imgui_tables.cpp">
       <Filter>imgui</Filter>
     </ClCompile>
+    <ClCompile Include="upnpnat\upnpnat.cpp">
+      <Filter>upnpnat</Filter>
+    </ClCompile>
+    <ClCompile Include="upnpnat\xmlParser.cpp">
+      <Filter>upnpnat</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
@@ -40,10 +46,20 @@
     <ClInclude Include="imgui\imconfig.h">
       <Filter>imgui</Filter>
     </ClInclude>
+    <ClInclude Include="upnpnat\upnpnat.h">
+      <Filter>upnpnat</Filter>
+    </ClInclude>
+    <ClInclude Include="upnpnat\xmlParser.h">
+      <Filter>upnpnat</Filter>
+    </ClInclude>
+    <ClInclude Include="WndProcWalker.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="imgui">
       <UniqueIdentifier>{be6d2e04-b0ee-425e-aa4d-aba52dd7889e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="upnpnat">
+      <UniqueIdentifier>{fdf7210a-0ee7-46d4-b841-7ca8853946b5}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

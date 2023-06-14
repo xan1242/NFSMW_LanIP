@@ -7,7 +7,12 @@
 #include "imgui.h"
 #include "imgui_impl_dx9.h"
 #include "imgui_impl_win32.h"
+#include "WndProcWalker.hpp"
 #include <d3d9.h>
+#include <WinSock2.h>
+#include "upnpnat/upnpnat.h"
+
+#pragma comment(lib,"ws2_32.lib") //Winsock Library
 
 #define GAME_HWND_ADDR 0x00982BF4
 #define GAME_D3DDEVICE_ADDR 0x00982BDC
@@ -30,6 +35,10 @@ uintptr_t RenderLoopFuncAddr;
 uintptr_t RenderResetFuncAddr;
 
 bool bShowIPInputWindow = false;
+bool bShownIPWindowOnce = false;
+
+uint32_t LastPortMapAddr = 0;
+bool bUseUPnP = false;
 
 // needed because MW reports a tiny viewport for some reason
 void(__stdcall* GetCurrentRes)(unsigned int* OutWidth, unsigned int* OutHeight) = (void(__stdcall*)(unsigned int*, unsigned int*))0x6C27D0;
@@ -53,9 +62,17 @@ void DrawIPInputWindow()
 {
 	if (ImGui::BeginPopupModal(POPUP_MODAL_HEADER, &bShowIPInputWindow, ImGuiWindowFlags_AlwaysAutoResize))
 	{
+		if (!bShownIPWindowOnce)
+		{
+			bUseUPnP = true;
+			bShownIPWindowOnce = true;
+		}
+
 		ImGui::InputText("IP Address", (char*)0x008F42EC, 32);
 		ImGui::InputInt("Port", (int*)0x008F430C);
 		*(int*)0x008F430C &= 0xFFFF;
+
+		ImGui::Checkbox("Use UPnP for host port", &bUseUPnP);
 
 		if (ImGui::Button("Connect"))
 		{
@@ -102,31 +119,55 @@ void __stdcall PCLAN_NotificationMessageHook(uint32_t msg, void* FEObject, uint3
 	return reinterpret_cast<void(__thiscall*)(uintptr_t, uint32_t, void*, uint32_t, uint32_t)>(PCLAN_NotificationMessage)(that, msg, FEObject, unk1, unk2);
 }
 
-unsigned int GameWndProcAddr = 0;
-LRESULT(WINAPI* GameWndProc)(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-LRESULT WINAPI ImguiWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+namespace InputBlocker
 {
-	switch (msg)
+	HMODULE mhXtendedInput;
+	bool(__cdecl* XtendedInputSetPollingState)(bool state);
+	bool bLookedForXInput = false;
+	bool bFoundXInput = false;
+
+	void LookForXtendedInput()
 	{
-		// ignore the following messages because it conflicts with the game & XtendedInput
-	case WM_SETCURSOR:
-	case WM_MOUSEWHEEL:
-	case WM_LBUTTONUP:
-	case WM_RBUTTONUP:
-	case WM_MBUTTONUP:
-	case WM_XBUTTONUP:
-	case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
-	case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK:
-	case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK:
-	case WM_XBUTTONDOWN: case WM_XBUTTONDBLCLK:
-	case WM_MOUSEMOVE:
-		return GameWndProc(hWnd, msg, wParam, lParam);;
+		if (!mhXtendedInput)
+		{
+			mhXtendedInput = GetModuleHandleA("NFS_XtendedInput.asi");
+			if (mhXtendedInput)
+			{
+				XtendedInputSetPollingState = reinterpret_cast<bool(__cdecl*)(bool)>(GetProcAddress(mhXtendedInput, "SetPollingState"));
+				bFoundXInput = XtendedInputSetPollingState != nullptr;
+			}
+		}
 	}
 
-	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-		return TRUE;
+	uintptr_t ptrGameDevicePoll = 0x6349B0;
+	void __stdcall GameDevice_PollDevice_Hook()
+	{
+		uintptr_t that;
+		_asm mov that, ecx
 
-	return GameWndProc(hWnd, msg, wParam, lParam);
+		if (bBlockedGameInput)
+			return;
+
+		return reinterpret_cast<void(__thiscall*)(uintptr_t)>(ptrGameDevicePoll)(that);
+	}
+}
+
+LRESULT WINAPI ImguiWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	//ImGuiIO& io = ImGui::GetIO();
+
+	//switch (msg)
+	//{
+	//	// ignore the following messages because it conflicts with the game & XtendedInput
+	//case WM_MOUSELEAVE:
+	//case WM_NCMOUSELEAVE:
+	//case WM_MOUSEMOVE:
+	//case WM_SETCURSOR:
+	//	return FALSE;
+	//}
+
+	ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+	return FALSE;
 }
 
 void ImguiUpdate()
@@ -136,11 +177,14 @@ void ImguiUpdate()
 	ImGui::NewFrame();
 }
 
-void ImguiReset()
+void ImguiLost()
 {
 	if (bInitedImgui)
 		ImGui_ImplDX9_InvalidateDeviceObjects();
+}
 
+void ImguiReset()
+{
 	if (bInitedImgui)
 		ImGui_ImplDX9_CreateDeviceObjects();
 }
@@ -179,43 +223,18 @@ void InitImgui()
 	bInitedImgui = true;
 }
 
-namespace InputBlocker
-{
-	HMODULE mhXtendedInput;
-	bool(__cdecl* XtendedInputSetPollingState)(bool state);
-	bool bLookedForXInput = false;
-	bool bFoundXInput = false;
-	
-	void LookForXtendedInput()
-	{
-		if (!mhXtendedInput)
-		{
-			mhXtendedInput = GetModuleHandleA("NFS_XtendedInput.asi");
-			if (mhXtendedInput)
-			{
-				XtendedInputSetPollingState = reinterpret_cast<bool(__cdecl*)(bool)>(GetProcAddress(mhXtendedInput, "SetPollingState"));
-				bFoundXInput = XtendedInputSetPollingState != nullptr;
-			}
-		}
-	}
-
-	uintptr_t ptrGameDevicePoll = 0x6349B0;
-	void __stdcall GameDevice_PollDevice_Hook()
-	{
-		uintptr_t that;
-		_asm mov that, ecx
-
-		if (bBlockedGameInput)
-			return;
-
-		return reinterpret_cast<void(__thiscall*)(uintptr_t)>(ptrGameDevicePoll)(that);
-	}
-}
-
-
 void GameInit()
 {
+	WndProcWalker::Init();
+	WndProcWalker::AddWndProc(ImguiWndProc);
+
 	InitImgui();
+
+	if (!InputBlocker::bLookedForXInput)
+	{
+		InputBlocker::LookForXtendedInput();
+		InputBlocker::bLookedForXInput = true;
+	}
 
 	return reinterpret_cast<void(*)()>(GameInitFuncAddr)();
 }
@@ -229,107 +248,100 @@ void GameLoopPostRender()
 {
 	ImGuiIO& io = ImGui::GetIO();
 
-	HWND focused_window = ::GetForegroundWindow();
-	const bool is_app_focused = (focused_window == *(HWND*)GAME_HWND_ADDR);
-	if (is_app_focused)
+	if (InputBlocker::bFoundXInput)
 	{
-		MSG inMsg;
-		PeekMessageA(&inMsg, *(HWND*)GAME_HWND_ADDR, WM_MOUSEFIRST, WM_MOUSELAST, PM_NOREMOVE);
-		switch (inMsg.message)
-		{
-			// re-read the messages later because imgui needs info
-		case WM_MOUSEWHEEL:
-		case WM_LBUTTONUP:
-		case WM_RBUTTONUP:
-		case WM_MBUTTONUP:
-		case WM_XBUTTONUP:
-		case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
-		case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK:
-		case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK:
-		case WM_XBUTTONDOWN: case WM_XBUTTONDBLCLK:
-			ImGui_ImplWin32_WndProcHandler(*(HWND*)GAME_HWND_ADDR, inMsg.message, inMsg.wParam, inMsg.lParam);
-		}
-
-		if (!InputBlocker::bLookedForXInput)
-		{
-			InputBlocker::LookForXtendedInput();
-			InputBlocker::bLookedForXInput = true;
-		}
-
-		if (InputBlocker::bFoundXInput)
-		{
-			if (io.WantCaptureKeyboard || io.WantCaptureMouse)
-				InputBlocker::XtendedInputSetPollingState(false);
-			else
-				InputBlocker::XtendedInputSetPollingState(true);
-		}
+		if (io.WantCaptureKeyboard || io.WantCaptureMouse || !WndProcWalker::IsWindowActive())
+			InputBlocker::XtendedInputSetPollingState(false);
 		else
-		{
-			if (io.WantCaptureKeyboard || io.WantCaptureMouse)
-				bBlockedGameInput = true;
-			else
-				bBlockedGameInput = false;
-		}
+			InputBlocker::XtendedInputSetPollingState(true);
 	}
 	else
 	{
-		if (InputBlocker::bFoundXInput)
-		{
-			InputBlocker::XtendedInputSetPollingState(false);
-		}
-		else
-		{
+		if (io.WantCaptureKeyboard || io.WantCaptureMouse || !WndProcWalker::IsWindowActive())
 			bBlockedGameInput = true;
-		}
+		else
+			bBlockedGameInput = false;
 	}
 
 	return reinterpret_cast<void(*)()>(GameLoopPostRenderFuncAddr)();
 }
 
-void ImguiSetCursorPos(int X, int Y)
-{
-	ImGuiIO& io = ImGui::GetIO();
-	io.WantSetMousePos = true;
-	if (!InputBlocker::bFoundXInput)
-	{
-		uint32_t resX, resY;
-		GetCurrentRes(&resX, &resY);
-
-		float ratio = resY / 480.0f;
-		io.AddMousePosEvent(static_cast<float>(X) * ratio, static_cast<float>(Y) * ratio);
-	}
-	else
-	{
-		POINT pos;
-		if (::GetCursorPos(&pos) && ::ScreenToClient(*(HWND*)GAME_HWND_ADDR, &pos))
-			io.AddMousePosEvent((float)pos.x, (float)pos.y);
-	}
-}
-
 void __cdecl RenderLoop(int X, int Y)
 {
+	reinterpret_cast<void(__cdecl*)(int, int)>(RenderLoopFuncAddr)(X, Y);
+
 	if (bInitedImgui)
 	{
-		ImguiSetCursorPos(X, Y);
+		//ImguiSetCursorPos(X, Y);
 		ImguiUpdate();
 		ShowWindows();
 		ImguiRenderFrame();
 	}
-	return reinterpret_cast<void(__cdecl*)(int, int)>(RenderLoopFuncAddr)(X, Y);
+	return;
 }
 
 
 void RenderReset()
 {
-	ImguiReset();
+	ImguiLost();
 
-	return reinterpret_cast<void(*)()>(RenderResetFuncAddr)();
+	reinterpret_cast<void(*)()>(RenderResetFuncAddr)();
+
+	ImguiReset();
 }
 
 char* ServerIP = (char*)0x8F42EC;
 char* ReturnServerIP()
 {
 	return ServerIP;
+}
+
+uintptr_t GetNetworkLongAddr = 0x8519E0;
+uint32_t CatchInterfaceAddr(uint32_t a0, uint32_t a1)
+{
+	uint32_t addr = reinterpret_cast<uint32_t(*)(uint32_t, uint32_t)>(GetNetworkLongAddr)(a0, a1);
+
+	if (addr && (addr != 0x7F000001) && bUseUPnP)
+	{
+		if (LastPortMapAddr != addr)
+		{
+			UPNPNAT nat;
+
+			nat.init(5, 10);
+
+			if (!nat.discovery())
+				return addr;
+
+			char addr_str[32];
+			sprintf(addr_str, "%u.%u.%u.%u", addr >> 24 & 0xFF, addr >> 16 & 0xFF, addr >> 8 & 0xFF, addr & 0xFF);
+
+			if (nat.add_port_mapping("NFSMW", addr_str, 3658, 3658, "UDP", 86400))
+				LastPortMapAddr = addr;
+		}
+	}
+
+	return addr;
+}
+
+uintptr_t SocketFunc1 = 0x84AE70;
+uintptr_t SocketPatch1(uint32_t af, uint32_t type, uint32_t protocol)
+{
+	return reinterpret_cast<uintptr_t(*)(uint32_t, uint32_t, uint32_t)>(SocketFunc1)(af, type, 17);
+}
+
+int __stdcall WSAStartupHook(WORD wVersionRequested, LPWSADATA lpWSAData)
+{
+	return WSAStartup(MAKEWORD(2, 2), lpWSAData);
+}
+
+uintptr_t BindFunc = 0x0084AFB0;
+int bindhook(SOCKET s, const sockaddr* name, int namelen)
+{
+	sockaddr_in* add = (sockaddr_in*)name;
+	add->sin_family = AF_INET;
+	add->sin_addr.s_addr = htonl(INADDR_ANY);
+
+	return reinterpret_cast<int(*)(SOCKET, const sockaddr*, int)>(SocketFunc1)(s, name, namelen);
 }
 
 #pragma runtime_checks("", restore)
@@ -339,20 +351,31 @@ int Init()
 	//GameLoopFuncAddr = (uintptr_t)injector::MakeCALL(0x00663EAE, GameLoop).get_raw<void>();
 	GameLoopPostRenderFuncAddr = (uintptr_t)injector::MakeJMP(0x006DF8E5, GameLoopPostRender).get_raw<void>();
 	RenderLoopFuncAddr = (uintptr_t)injector::MakeCALL(0x00516F93, RenderLoop).get_raw<void>();
-	RenderResetFuncAddr = (uintptr_t)injector::MakeCALL(0x006DB265, RenderReset).get_raw<void>();
+	RenderResetFuncAddr = (uintptr_t)injector::MakeCALL(0x6DB302, RenderReset).get_raw<void>();
+	injector::MakeCALL(0x6DE185, RenderReset);
+	injector::MakeCALL(0x6E72C1, RenderReset);
+	injector::MakeCALL(0x6E753E, RenderReset);
+	injector::MakeCALL(0x6E7606, RenderReset);
+
 	InputBlocker::ptrGameDevicePoll = *(uintptr_t*)0x008A7BAC;
 	injector::WriteMemory<uintptr_t>(0x008A7BAC, (uintptr_t)InputBlocker::GameDevice_PollDevice_Hook, true);
 
 	PCLAN_NotificationMessage = *(uintptr_t*)0x0089E39C;
 	injector::WriteMemory<uintptr_t>(0x0089E39C, (uintptr_t)PCLAN_NotificationMessageHook, true);
 
-	GameWndProcAddr = *(unsigned int*)WNDPROC_POINTER_ADDR;
-	GameWndProc = (LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM))GameWndProcAddr;
-	injector::WriteMemory<unsigned int>(WNDPROC_POINTER_ADDR, (unsigned int)&ImguiWndProc, true);
-
 	// hook to ignore the redirected slave server IP - needed to connect via internet
 	injector::MakeCALL(0x00841665, ReturnServerIP);
 	injector::MakeCALL(0x00841DD5, ReturnServerIP);
+
+	GetNetworkLongAddr = (uintptr_t)injector::MakeCALL(0x841641, CatchInterfaceAddr).get_raw<void>();
+	SocketFunc1 = (uintptr_t)injector::MakeCALL(0x00851482, SocketPatch1).get_raw<void>();
+	injector::MakeCALL(0x0086408A, SocketPatch1);
+
+	// nuke the demangler because it's a security risk (because the domain is still working) and because online doesn't work
+	injector::WriteMemory<uint32_t>(0x008C7ADC, 0, true);
+
+	// patch the UDP bind to use any addr -- needed for internet connections
+	BindFunc = (uintptr_t)injector::MakeCALL(0x00850F8C, bindhook).get_raw<void>();
 
 	return 0;
 }

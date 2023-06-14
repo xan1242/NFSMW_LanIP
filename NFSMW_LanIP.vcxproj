@@ -91,6 +91,9 @@
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="upnpnat\upnpnat.h" />
+    <ClInclude Include="upnpnat\xmlParser.h" />
+    <ClInclude Include="WndProcWalker.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -112,6 +115,8 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="upnpnat\upnpnat.cpp" />
+    <ClCompile Include="upnpnat\xmlParser.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
