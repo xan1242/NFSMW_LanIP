@@ -16,7 +16,7 @@ In addition to that, it also patches the game IP address reader and port binder 
 
 - If connecting to yourself, do not use "localhost" or "127.0.0.1" (despite that being the default). Use your adapter's local IP instead (192.168.x.x). This is due to server not broadcasting properly across all addresses.
 
-- If you're doing ANY online interaction, tick the UPnP checkbox. In case UPnP is not available, open a UDP port `3658` manually. In case even that isn't an option, you will have to resort to a VPN service like Hamachi or Radmin.
+- If you're doing ANY online interaction, tick the UPnP and Online checkboxes. In case UPnP is not available, open a UDP port `3658` manually. In case even that isn't an option, you will have to resort to a VPN service like Hamachi or Radmin.
 
 - If any issues arise, restart the game. This is not a very polished area of the game to begin with.
 
@@ -37,6 +37,8 @@ If you wish to host a standalone LAN lobby server without the game running, you 
 - manual server/host ports (currently 3658)
 
 - look at Underground 2
+
+- fix mixed online/local playing -- currently there can only be 1 local player, not multiple...
 
 ## Credits
 
